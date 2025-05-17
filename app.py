@@ -22,6 +22,15 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # イベントの重複検知（メモリ内保存）
 recent_event_ids = set()
 
+# 道具名をクリーンに抽出する関数
+def extract_tool_name(text):
+    # よくある語句を除去
+    keywords_to_remove = ["の場所", "どこ", "場所", "は？", "は", "？"]
+    for word in keywords_to_remove:
+        text = text.replace(word, "")
+    return text.strip()
+
+# Airtableから道具の場所を取得
 def find_tool_location(tool_name):
     url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
     headers = {
@@ -67,15 +76,16 @@ def slack_events():
             raw_text = event.get("text", "")
             channel_id = event.get("channel")
 
-            # ✅ メンション除去（<@XXXX>）をすべて削除
+            # ✅ メンション除去
             cleaned_text = re.sub(r"<@[\w]+>", "", raw_text).strip()
-
             print("ユーザーからのメッセージ:", cleaned_text)
 
-            # Airtable検索
+            # 場所検索かどうか判定
             if "どこ" in cleaned_text or "場所" in cleaned_text:
-                reply_text = find_tool_location(cleaned_text)
+                tool_name = extract_tool_name(cleaned_text)
+                reply_text = find_tool_location(tool_name)
             else:
+                # OpenAIに処理を任せる
                 response = client.chat.completions.create(
                     model="gpt-4",
                     messages=[
