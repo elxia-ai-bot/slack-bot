@@ -27,22 +27,21 @@ def extract_tool_name(text):
     text = text.replace("　", " ")  # 全角→半角
     return text.strip()
 
-def find_tool_location(tool_name):
+def get_tool_list_by_user(user_name):
     url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
-    headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
-    formula = f"SEARCH(LOWER('{tool_name.lower()}'), LOWER({{道具名}}))"
-    print("🔍 Airtable検索条件:", formula)
-
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    formula = f"{{使用者}} = '{user_name}'"
     params = {"filterByFormula": formula}
-    response = requests.get(url, headers=headers, params=params)
-    data = response.json()
-    print("🧾 Airtableレスポンス:", data)
+    response = requests.get(url, headers=headers, params=params).json()
 
-    if "records" in data and data["records"]:
-        record = data["records"][0]["fields"]
-        return f"{record.get('道具名')} は現在「{record.get('現在の場所')}」にあります。"
+    if "records" in response and response["records"]:
+        lines = [f"・{rec['fields'].get('管理番号', '不明')}：{rec['fields'].get('道具名', '名称なし')}" for rec in response["records"]]
+        return f"\n🧰 現在 {user_name} さんが使用している道具一覧:\n" + "\n".join(lines)
     else:
-        return f"{tool_name} は見つかりませんでした。"
+        return f"\n🧰 現在 {user_name} さんが使用している道具はありません。"
 
 def update_user_and_location(message):
     lines = message.strip().split("\n")
@@ -94,6 +93,9 @@ def update_user_and_location(message):
     msg = f"{success}件の道具情報を「{old_user}」から「{new_user}」へ更新しました。"
     if failures:
         msg += f"\n更新失敗：{', '.join(failures)}"
+
+    # 一覧も追加
+    msg += get_tool_list_by_user(new_user.strip())
     return msg
 
 @app.route('/slack', methods=['POST'])
@@ -122,7 +124,6 @@ def slack_events():
             cleaned_text = re.sub(r"<@[\w]+>", "", raw_text).strip()
             print("ユーザーからのメッセージ:", cleaned_text)
 
-            # 柔軟判定：変更 or 場所 or その他
             if "から" in cleaned_text and "へ" in cleaned_text:
                 reply_text = update_user_and_location(cleaned_text)
             elif "どこ" in cleaned_text or "場所" in cleaned_text:
