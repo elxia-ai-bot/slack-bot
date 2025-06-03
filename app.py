@@ -22,7 +22,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 event_cache = deque(maxlen=100)
 event_timestamps = {}
-EVENT_CACHE_TTL = 60  # seconds
+EVENT_CACHE_TTL = 60  # 秒
 
 def extract_tool_name(text):
     keywords_to_remove = ["の場所", "どこにありますか", "どこ", "場所", "は？", "は", "？"]
@@ -67,27 +67,40 @@ def get_tool_list_by_user(user_name):
 def update_user_and_location(message):
     lines = message.strip().split("\n")
     joined = " ".join(lines)
+    update_items = []
+    old_user = new_user = ""
 
-    match = re.search(r"(.+?)から(.+?)へ", joined)
-    if not match:
+    # 複数パターンに対応
+    for line in lines:
+        # パターン1: 「道具名をAからBへ」
+        m = re.search(r"(.+?)を(.+?)から(.+?)へ", line)
+        if m:
+            tool_name = m.group(1).strip()
+            old_user = m.group(2).strip()
+            new_user = m.group(3).strip()
+            update_items.append(tool_name)
+            continue
+
+        # パターン2: 「AからBへ」だけを含む行
+        m2 = re.search(r"(.+?)から(.+?)へ", line)
+        if m2:
+            old_user = m2.group(1).strip()
+            new_user = m2.group(2).strip()
+            continue
+
+        # パターン3: 上記に該当しない → 道具名の行として追加
+        if line.strip():
+            update_items.append(line.strip())
+
+    if not old_user or not new_user:
         return "変更対象の使用者や場所が読み取れませんでした。"
-    old_user = match.group(1).strip().split()[-1]
-    new_user = match.group(2).strip()
 
     headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}", "Content-Type": "application/json"}
     today = date.today().isoformat()
     success = 0
     failures = []
 
-    # 1行ずつ道具名を抽出して検索・更新
-    for line in lines:
-        if "から" in line and "へ" in line:
-            continue  # 移動行はスキップ
-
-        tool_line = line.strip()
-        if not tool_line:
-            continue
-
+    for tool_line in update_items:
         url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
         formula = f"SEARCH(LOWER('{tool_line}'), LOWER({{道具名}}))"
         params = {"filterByFormula": formula}
