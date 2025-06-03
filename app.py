@@ -20,10 +20,9 @@ TABLE_NAME = "Table 1"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# 重複イベントの管理
 event_cache = deque(maxlen=100)
 event_timestamps = {}
-EVENT_CACHE_TTL = 60  # 秒
+EVENT_CACHE_TTL = 60  # seconds
 
 def extract_tool_name(text):
     keywords_to_remove = ["の場所", "どこにありますか", "どこ", "場所", "は？", "は", "？"]
@@ -34,18 +33,12 @@ def extract_tool_name(text):
 
 def find_tool_location(tool_name):
     url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_TOKEN}",
-        "Content-Type": "application/json"
-    }
-
-    # 管理番号での検索（例: 管理番号95）
+    headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
     match = re.search(r"管理番号\s*(\d+)", tool_name)
     if match:
         code = match.group(1)
         formula = f"FIND('{code}', {{管理番号}})"
     else:
-        # 道具名での部分一致検索
         tool_name = tool_name.replace("　", " ").strip()
         formula = f"SEARCH(LOWER('{tool_name}'), LOWER({{道具名}}))"
 
@@ -60,10 +53,7 @@ def find_tool_location(tool_name):
 
 def get_tool_list_by_user(user_name):
     url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_TOKEN}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
     formula = f"{{使用者}} = '{user_name}'"
     params = {"filterByFormula": formula}
     response = requests.get(url, headers=headers, params=params).json()
@@ -84,27 +74,22 @@ def update_user_and_location(message):
     old_user = match.group(1).strip().split()[-1]
     new_user = match.group(2).strip()
 
-    record_lines = [line for line in lines if re.search(r"\d+", line)]
-    if not record_lines:
-        return "変更対象の道具が見つかりませんでした。"
-
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_TOKEN}",
-        "Content-Type": "application/json"
-    }
-
+    headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}", "Content-Type": "application/json"}
     today = date.today().isoformat()
     success = 0
     failures = []
 
-    for line in record_lines:
-        match = re.search(r"(\d+)", line)
-        if not match:
+    # 1行ずつ道具名を抽出して検索・更新
+    for line in lines:
+        if "から" in line and "へ" in line:
+            continue  # 移動行はスキップ
+
+        tool_line = line.strip()
+        if not tool_line:
             continue
-        tool_code = match.group(1).strip()
 
         url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
-        formula = f"FIND('{tool_code}', {{管理番号}})"
+        formula = f"SEARCH(LOWER('{tool_line}'), LOWER({{道具名}}))"
         params = {"filterByFormula": formula}
         response = requests.get(url, headers=headers, params=params).json()
 
@@ -122,14 +107,13 @@ def update_user_and_location(message):
             if patch.status_code == 200:
                 success += 1
             else:
-                failures.append(tool_code)
+                failures.append(tool_line)
         else:
-            failures.append(tool_code)
+            failures.append(tool_line)
 
     msg = f"{success}件の道具情報を「{old_user}」から「{new_user}」へ更新しました。"
     if failures:
         msg += f"\n更新失敗：{', '.join(failures)}"
-
     msg += get_tool_list_by_user(new_user)
     return msg
 
@@ -145,10 +129,9 @@ def slack_events():
     event_id = data.get("event_id")
     now = time.time()
 
-    if event_id in event_timestamps:
-        if now - event_timestamps[event_id] < EVENT_CACHE_TTL:
-            print(f"⚠️ 重複イベント {event_id} をスキップ")
-            return "Duplicate", 200
+    if event_id in event_timestamps and now - event_timestamps[event_id] < EVENT_CACHE_TTL:
+        print(f"⚠️ 重複イベント {event_id} をスキップ")
+        return "Duplicate", 200
 
     if data.get("type") == "url_verification":
         return jsonify({"challenge": data["challenge"]})
