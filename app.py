@@ -136,4 +136,26 @@ def slack_events():
             print("ユーザーからのメッセージ:", cleaned_text)
 
             if "から" in cleaned_text and "へ" in cleaned_text:
-                reply_text = update_us
+                reply_text = update_user_and_location(cleaned_text)
+            elif "どこ" in cleaned_text or "場所" in cleaned_text:
+                tool_name = extract_tool_name(cleaned_text)
+                reply_text = find_tool_location(tool_name)
+            else:
+                response = client.chat.completions.create(
+                    model="gpt-4-turbo",
+                    messages=[
+                        {"role": "system", "content": "あなたはSlack上の親切なアシスタントBotです。"},
+                        {"role": "user", "content": cleaned_text}
+                    ]
+                )
+                reply_text = response.choices[0].message.content.strip()
+
+            requests.post("https://slack.com/api/chat.postMessage", json={
+                "channel": channel_id,
+                "text": reply_text
+            }, headers={
+                "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+                "Content-type": "application/json"
+            })
+
+    return "OK", 200
