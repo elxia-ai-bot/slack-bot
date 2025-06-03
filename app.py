@@ -7,6 +7,11 @@ from datetime import date
 from dotenv import load_dotenv
 from collections import deque
 from openai import OpenAI
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib import colors
+from reportlab.platypus import Table, TableStyle
+import io
 
 load_dotenv()
 app = Flask(__name__)
@@ -24,45 +29,87 @@ event_cache = deque(maxlen=100)
 event_timestamps = {}
 EVENT_CACHE_TTL = 60  # 秒
 
+# Airtableから全データ取得しPDFを生成する関数
+def generate_pdf_from_airtable():
+    url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
+    headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
+    response = requests.get(url, headers=headers).json()
+
+    records = response.get("records", [])
+    if not records:
+        return None
+
+    # 表ヘッダー
+    data = [["管理番号", "道具名", "使用者", "現在の場所", "ステータス", "最終更新日", "備考"]]
+    for rec in records:
+        f = rec.get("fields", {})
+        data.append([
+            f.get("管理番号", ""),
+            f.get("道具名", ""),
+            f.get("使用者", ""),
+            f.get("現在の場所", ""),
+            f.get("ステータス", ""),
+            f.get("最終更新日", ""),
+            f.get("備考", "")
+        ])
+
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    table = Table(data, repeatRows=1)
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+
+    table.wrapOn(c, width, height)
+    table.drawOn(c, 30, height - 30 - 20 * len(data))  # 上から描画
+
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+def upload_pdf_to_slack(channel_id):
+    pdf_buffer = generate_pdf_from_airtable()
+    if not pdf_buffer:
+        return
+
+    response = requests.post(
+        "https://slack.com/api/files.upload",
+        headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+        files={"file": ("tool_list.pdf", pdf_buffer, "application/pdf")},
+        data={
+            "filename": "tool_list.pdf",
+            "channels": channel_id,
+            "initial_comment": "📄 最新の道具管理表を添付しました。"
+        }
+    )
+    print("SlackへのPDF送信:", response.status_code, response.text)
+
 def extract_tool_name(text):
-    keywords_to_remove = ["の場所", "どこにありますか", "どこ", "場所", "は？", "は", "？"]
-    for word in keywords_to_remove:
+    for word in ["の場所", "どこにありますか", "どこ", "場所", "は？", "は", "？"]:
         text = text.replace(word, "")
-    text = text.replace("　", " ")
-    return text.strip()
+    return text.replace("　", " ").strip()
 
 def find_tool_location(tool_name):
     url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
     headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
-    match = re.search(r"管理番号\s*(\d+)", tool_name)
-    if match:
-        code = match.group(1)
+    if re.match(r"管理番号\s*\d+", tool_name):
+        code = re.findall(r"\d+", tool_name)[0]
         formula = f"FIND('{code}', {{管理番号}})"
     else:
-        tool_name = tool_name.replace("　", " ").strip()
         formula = f"SEARCH(LOWER('{tool_name}'), LOWER({{道具名}}))"
-
     params = {"filterByFormula": formula}
     response = requests.get(url, headers=headers, params=params).json()
-
     if "records" in response and response["records"]:
-        record = response["records"][0]["fields"]
-        return f"{record.get('道具名')} は現在「{record.get('現在の場所')}」にあります。"
+        f = response["records"][0]["fields"]
+        return f"{f.get('道具名')} は現在「{f.get('現在の場所')}」にあります。"
     else:
         return f"{tool_name} は見つかりませんでした。"
-
-def get_tool_list_by_user(user_name):
-    url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
-    headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
-    formula = f"{{使用者}} = '{user_name}'"
-    params = {"filterByFormula": formula}
-    response = requests.get(url, headers=headers, params=params).json()
-
-    if "records" in response and response["records"]:
-        lines = [f"・{rec['fields'].get('管理番号', '不明')}：{rec['fields'].get('道具名', '名称なし')}" for rec in response["records"]]
-        return f"\n🧰 現在 {user_name} さんが使用している道具一覧:\n" + "\n".join(lines)
-    else:
-        return f"\n🧰 現在 {user_name} さんが使用している道具はありません。"
 
 def update_user_and_location(message):
     lines = message.strip().split("\n")
@@ -70,26 +117,18 @@ def update_user_and_location(message):
     update_items = []
     old_user = new_user = ""
 
-    # 複数パターンに対応
     for line in lines:
-        # パターン1: 「道具名をAからBへ」
         m = re.search(r"(.+?)を(.+?)から(.+?)へ", line)
         if m:
-            tool_name = m.group(1).strip()
+            update_items.append(m.group(1).strip())
             old_user = m.group(2).strip()
             new_user = m.group(3).strip()
-            update_items.append(tool_name)
-            continue
-
-        # パターン2: 「AからBへ」だけを含む行
-        m2 = re.search(r"(.+?)から(.+?)へ", line)
-        if m2:
-            old_user = m2.group(1).strip()
-            new_user = m2.group(2).strip()
-            continue
-
-        # パターン3: 上記に該当しない → 道具名の行として追加
-        if line.strip():
+        elif "から" in line and "へ" in line:
+            m = re.search(r"(.+?)から(.+?)へ", line)
+            if m:
+                old_user = m.group(1).strip()
+                new_user = m.group(2).strip()
+        elif line.strip():
             update_items.append(line.strip())
 
     if not old_user or not new_user:
@@ -108,6 +147,7 @@ def update_user_and_location(message):
 
         if "records" in response and response["records"]:
             record_id = response["records"][0]["id"]
+            patch_url = f"{url}/{record_id}"
             update_data = {
                 "fields": {
                     "使用者": new_user,
@@ -115,7 +155,6 @@ def update_user_and_location(message):
                     "最終更新日": today
                 }
             }
-            patch_url = f"{url}/{record_id}"
             patch = requests.patch(patch_url, headers=headers, json=update_data)
             if patch.status_code == 200:
                 success += 1
@@ -127,7 +166,6 @@ def update_user_and_location(message):
     msg = f"{success}件の道具情報を「{old_user}」から「{new_user}」へ更新しました。"
     if failures:
         msg += f"\n更新失敗：{', '.join(failures)}"
-    msg += get_tool_list_by_user(new_user)
     return msg
 
 @app.route('/slack', methods=['POST'])
@@ -136,7 +174,7 @@ def slack_events():
     print("=== Slackから受信した生データ ===")
     print(data)
 
-    if data is None:
+    if not data:
         return "NO DATA", 400
 
     event_id = data.get("event_id")
@@ -159,9 +197,14 @@ def slack_events():
 
             if "から" in cleaned_text and "へ" in cleaned_text:
                 reply_text = update_user_and_location(cleaned_text)
+                # PDFをSlackにアップロード
+                upload_pdf_to_slack(channel_id)
             elif "どこ" in cleaned_text or "場所" in cleaned_text:
                 tool_name = extract_tool_name(cleaned_text)
                 reply_text = find_tool_location(tool_name)
+            elif "/pdf" in cleaned_text or "一覧" in cleaned_text:
+                reply_text = "📄 道具管理表を生成しました。"
+                upload_pdf_to_slack(channel_id)
             else:
                 response = client.chat.completions.create(
                     model="gpt-4-turbo",
@@ -184,3 +227,6 @@ def slack_events():
             event_cache.append(event_id)
 
     return "OK", 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
