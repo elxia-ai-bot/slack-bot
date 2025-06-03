@@ -46,14 +46,14 @@ def get_tool_list_by_user(user_name):
 def update_user_and_location(message):
     lines = message.strip().split("\n")
 
-    # 全文から「〇〇から△△へ」を正しく抜き出す
+    # 「〇〇から△△へ」の部分を末尾優先で正確に抽出
     joined = " ".join(lines)
-    match = re.search(r"(.+?)から(.+?)へ", joined)
-    if not match:
+    matches = re.findall(r"(.+?)から(.+?)へ", joined)
+    if not matches:
         return "変更対象の使用者や場所が読み取れませんでした。"
-    old_user, new_user = match.group(1).strip(), match.group(2).strip()
+    old_user, new_user = matches[-1][0].strip(), matches[-1][1].strip()
 
-    # 管理番号を含む行のみを処理対象に
+    # 管理番号行だけを対象に
     record_lines = [line for line in lines if re.search(r"\d+", line)]
 
     if not record_lines:
