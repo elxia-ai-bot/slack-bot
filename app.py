@@ -29,7 +29,6 @@ event_cache = deque(maxlen=100)
 event_timestamps = {}
 EVENT_CACHE_TTL = 60  # 秒
 
-# Airtableから全データ取得しPDFを生成する関数
 def generate_pdf_from_airtable():
     url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
     headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
@@ -39,7 +38,6 @@ def generate_pdf_from_airtable():
     if not records:
         return None
 
-    # 表ヘッダー
     data = [["管理番号", "道具名", "使用者", "現在の場所", "ステータス", "最終更新日", "備考"]]
     for rec in records:
         f = rec.get("fields", {})
@@ -67,8 +65,7 @@ def generate_pdf_from_airtable():
     ]))
 
     table.wrapOn(c, width, height)
-    table.drawOn(c, 30, height - 30 - 20 * len(data))  # 上から描画
-
+    table.drawOn(c, 30, height - 30 - 20 * len(data))
     c.save()
     buffer.seek(0)
     return buffer
@@ -85,7 +82,7 @@ def upload_pdf_to_slack(channel_id):
         data={
             "filename": "tool_list.pdf",
             "channels": channel_id,
-            "initial_comment": "\ud83d\udcc4 最新の道具管理表を添付しました。"
+            "initial_comment": "📄 最新の道具管理表を添付しました。"
         }
     )
     print("SlackへのPDF送信:", response.status_code, response.text)
@@ -192,7 +189,7 @@ def slack_events():
         if event.get("type") == "app_mention":
             raw_text = event.get("text", "")
             channel_id = event.get("channel")
-            cleaned_text = re.sub(r"<@\\w+>", "", raw_text).strip()
+            cleaned_text = re.sub(r"<@\w+>", "", raw_text).strip()
             print("ユーザーからのメッセージ:", cleaned_text)
 
             if "から" in cleaned_text and "へ" in cleaned_text:
