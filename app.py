@@ -9,14 +9,12 @@ from openai import OpenAI
 load_dotenv()
 app = Flask(__name__)
 
-# 環境変数読み込み
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
 
-# Airtable設定
 BASE_ID = "appOuWggbJxUAcFzF"
-TABLE_NAME = "Table 1"  # 必要に応じて"道具一覧"に戻してください
+TABLE_NAME = "Table 1"  # 必要に応じて変更
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -26,20 +24,35 @@ def extract_tool_name(text):
     keywords_to_remove = ["の場所", "どこ", "場所", "は？", "は", "？"]
     for word in keywords_to_remove:
         text = text.replace(word, "")
-    text = text.replace("　", " ")  # 全角スペース→半角
+    text = text.replace("　", " ")  # 全角→半角
     return text.strip()
 
-# 使用者・場所の更新処理
+def find_tool_location(tool_name):
+    url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
+    headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
+    formula = f"SEARCH(LOWER('{tool_name.lower()}'), LOWER({{道具名}}))"
+    print("🔍 Airtable検索条件:", formula)
+
+    params = {"filterByFormula": formula}
+    response = requests.get(url, headers=headers, params=params)
+    data = response.json()
+    print("🧾 Airtableレスポンス:", data)
+
+    if "records" in data and data["records"]:
+        record = data["records"][0]["fields"]
+        return f"{record.get('道具名')} は現在「{record.get('現在の場所')}」にあります。"
+    else:
+        return f"{tool_name} は見つかりませんでした。"
+
 def update_user_and_location(message):
     lines = message.strip().split("\n")
-    record_lines = [line for line in lines if re.match(r"^\d+\.", line)]
+    record_lines = [line for line in lines if re.match(r"^(管理番号)?\d+", line)]
     movement_line = next((line for line in lines if "から" in line and "へ" in line), "")
 
     if not record_lines or not movement_line:
-        return "変更指示が正しく読み取れませんでした。"
+        return "変更内容が正しく読み取れませんでした。"
 
     old_user, new_user = re.findall(r"(.*?)から(.*?)へ", movement_line)[0]
-
     headers = {
         "Authorization": f"Bearer {AIRTABLE_TOKEN}",
         "Content-Type": "application/json"
@@ -50,13 +63,11 @@ def update_user_and_location(message):
     failures = []
 
     for line in record_lines:
-        match = re.match(r"(\d+)\.(.+)", line.strip())
+        match = re.search(r"(\d+)", line)
         if not match:
             continue
-        code, name = match.groups()
-        tool_code = code.strip()
+        tool_code = match.group(1).strip()
 
-        # Airtable検索
         url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
         formula = f"FIND('{tool_code}', {{管理番号}})"
         params = {"filterByFormula": formula}
@@ -64,7 +75,6 @@ def update_user_and_location(message):
 
         if "records" in response and response["records"]:
             record_id = response["records"][0]["id"]
-
             update_data = {
                 "fields": {
                     "使用者": new_user.strip(),
@@ -72,10 +82,8 @@ def update_user_and_location(message):
                     "最終更新日": today
                 }
             }
-
             patch_url = f"{url}/{record_id}"
             patch = requests.patch(patch_url, headers=headers, json=update_data)
-
             if patch.status_code == 200:
                 success += 1
             else:
@@ -114,7 +122,8 @@ def slack_events():
             cleaned_text = re.sub(r"<@[\w]+>", "", raw_text).strip()
             print("ユーザーからのメッセージ:", cleaned_text)
 
-            if "変更をお願いします" in cleaned_text:
+            # 柔軟判定：変更 or 場所 or その他
+            if "から" in cleaned_text and "へ" in cleaned_text:
                 reply_text = update_user_and_location(cleaned_text)
             elif "どこ" in cleaned_text or "場所" in cleaned_text:
                 tool_name = extract_tool_name(cleaned_text)
