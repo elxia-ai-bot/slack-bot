@@ -14,17 +14,16 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
 
 BASE_ID = "appOuWggbJxUAcFzF"
-TABLE_NAME = "Table 1"  # 必要に応じて変更
+TABLE_NAME = "Table 1"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
-
 recent_event_ids = set()
 
 def extract_tool_name(text):
     keywords_to_remove = ["の場所", "どこ", "場所", "は？", "は", "？"]
     for word in keywords_to_remove:
         text = text.replace(word, "")
-    text = text.replace("　", " ")  # 全角→半角
+    text = text.replace("　", " ")
     return text.strip()
 
 def get_tool_list_by_user(user_name):
@@ -45,17 +44,17 @@ def get_tool_list_by_user(user_name):
 
 def update_user_and_location(message):
     lines = message.strip().split("\n")
-
-    # 「〇〇から△△へ」の部分を末尾優先で正確に抽出
     joined = " ".join(lines)
-    matches = re.findall(r"(.+?)から(.+?)へ", joined)
-    if not matches:
+
+    # 改善版：末尾の「〇〇から△△へ」だけにマッチして、前の道具名などを排除
+    match = re.search(r"(.+?)から(.+?)へ", joined)
+    if not match:
         return "変更対象の使用者や場所が読み取れませんでした。"
-    old_user, new_user = matches[-1][0].strip(), matches[-1][1].strip()
+    # 「から」の前の語句の最後の単語だけをold_userとする
+    old_user = match.group(1).strip().split()[-1]
+    new_user = match.group(2).strip()
 
-    # 管理番号行だけを対象に
     record_lines = [line for line in lines if re.search(r"\d+", line)]
-
     if not record_lines:
         return "変更対象の道具が見つかりませんでした。"
 
