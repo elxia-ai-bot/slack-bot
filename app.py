@@ -20,7 +20,7 @@ TABLE_NAME = "Table 1"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# 重複イベント検出（60秒キャッシュ）
+# 重複イベント管理（時間ベース）
 event_cache = deque(maxlen=100)
 event_timestamps = {}
 EVENT_CACHE_TTL = 60  # 秒
@@ -118,11 +118,12 @@ def slack_events():
 
     event_id = data.get("event_id")
     now = time.time()
-    if event_id in event_timestamps and now - event_timestamps[event_id] < EVENT_CACHE_TTL:
-        print(f"⚠️ 重複イベント {event_id} をスキップ")
-        return "Duplicate", 200
-    event_timestamps[event_id] = now
-    event_cache.append(event_id)
+
+    # イベント重複防止（処理前スキップ）
+    if event_id in event_timestamps:
+        if now - event_timestamps[event_id] < EVENT_CACHE_TTL:
+            print(f"⚠️ 重複イベント {event_id} をスキップ")
+            return "Duplicate", 200
 
     if data.get("type") == "url_verification":
         return jsonify({"challenge": data["challenge"]})
@@ -157,5 +158,9 @@ def slack_events():
                 "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
                 "Content-type": "application/json"
             })
+
+            # ✅ 成功したので重複検知用に記録
+            event_timestamps[event_id] = now
+            event_cache.append(event_id)
 
     return "OK", 200
