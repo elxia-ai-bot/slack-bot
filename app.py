@@ -22,21 +22,21 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # イベントの重複検知（メモリ内保存）
 recent_event_ids = set()
 
-# 道具名を抽出する関数（不要語句を削除）
+# 道具名を抽出し、ゆれを補正（全角スペース→半角）
 def extract_tool_name(text):
     keywords_to_remove = ["の場所", "どこ", "場所", "は？", "は", "？"]
     for word in keywords_to_remove:
         text = text.replace(word, "")
+    text = text.replace("　", " ")  # ← 全角スペースを半角へ
     return text.strip()
 
-# Airtableから道具の場所を取得（検索ゆれ対策あり）
+# Airtableから道具の場所を取得（部分一致＆小文字化）
 def find_tool_location(tool_name):
     url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
     headers = {
         "Authorization": f"Bearer {AIRTABLE_TOKEN}",
         "Content-Type": "application/json"
     }
-    # 小文字で部分一致検索
     params = {
         "filterByFormula": f"SEARCH(LOWER('{tool_name.lower()}'), LOWER({{道具名}}))"
     }
@@ -57,15 +57,11 @@ def slack_events():
     if data is None:
         return "NO DATA", 400
 
-    # チャレンジ応答
     if data.get("type") == "url_verification":
         return jsonify({"challenge": data["challenge"]})
 
-    # イベント処理
     if data.get("type") == "event_callback":
         event_id = data.get("event_id")
-
-        # ✅ 重複処理の防止
         if event_id in recent_event_ids:
             print(f"⚠️ 重複イベント {event_id} をスキップ")
             return "Duplicate", 200
@@ -76,16 +72,13 @@ def slack_events():
             raw_text = event.get("text", "")
             channel_id = event.get("channel")
 
-            # ✅ メンション除去
             cleaned_text = re.sub(r"<@[\w]+>", "", raw_text).strip()
             print("ユーザーからのメッセージ:", cleaned_text)
 
-            # 判定：場所の質問か？
             if "どこ" in cleaned_text or "場所" in cleaned_text:
                 tool_name = extract_tool_name(cleaned_text)
                 reply_text = find_tool_location(tool_name)
             else:
-                # OpenAIでチャット処理
                 response = client.chat.completions.create(
                     model="gpt-4",
                     messages=[
@@ -95,7 +88,6 @@ def slack_events():
                 )
                 reply_text = response.choices[0].message.content.strip()
 
-            # Slackに返信
             slack_response = requests.post("https://slack.com/api/chat.postMessage", json={
                 "channel": channel_id,
                 "text": reply_text
