@@ -85,7 +85,7 @@ def upload_pdf_to_slack(channel_id):
         data={
             "filename": "tool_list.pdf",
             "channels": channel_id,
-            "initial_comment": "📄 最新の道具管理表を添付しました。"
+            "initial_comment": "\ud83d\udcc4 最新の道具管理表を添付しました。"
         }
     )
     print("SlackへのPDF送信:", response.status_code, response.text)
@@ -192,12 +192,11 @@ def slack_events():
         if event.get("type") == "app_mention":
             raw_text = event.get("text", "")
             channel_id = event.get("channel")
-            cleaned_text = re.sub(r"<@[\w]+>", "", raw_text).strip()
+            cleaned_text = re.sub(r"<@\\w+>", "", raw_text).strip()
             print("ユーザーからのメッセージ:", cleaned_text)
 
             if "から" in cleaned_text and "へ" in cleaned_text:
                 reply_text = update_user_and_location(cleaned_text)
-                # PDFをSlackにアップロード
                 upload_pdf_to_slack(channel_id)
             elif "どこ" in cleaned_text or "場所" in cleaned_text:
                 tool_name = extract_tool_name(cleaned_text)
