@@ -38,11 +38,21 @@ def find_tool_location(tool_name):
         "Authorization": f"Bearer {AIRTABLE_TOKEN}",
         "Content-Type": "application/json"
     }
-    params = {
-        "filterByFormula": f"SEARCH(LOWER('{tool_name}'), LOWER({{道具名}}))"
-    }
+
+    # 管理番号での検索（例: 管理番号95）
+    match = re.search(r"管理番号\s*(\d+)", tool_name)
+    if match:
+        code = match.group(1)
+        formula = f"FIND('{code}', {{管理番号}})"
+    else:
+        # 道具名での部分一致検索
+        tool_name = tool_name.replace("　", " ").strip()
+        formula = f"SEARCH(LOWER('{tool_name}'), LOWER({{道具名}}))"
+
+    params = {"filterByFormula": formula}
     response = requests.get(url, headers=headers, params=params).json()
-    if "records" in response and len(response["records"]) > 0:
+
+    if "records" in response and response["records"]:
         record = response["records"][0]["fields"]
         return f"{record.get('道具名')} は現在「{record.get('現在の場所')}」にあります。"
     else:
