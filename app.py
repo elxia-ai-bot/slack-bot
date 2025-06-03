@@ -20,17 +20,33 @@ TABLE_NAME = "Table 1"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# 重複イベント管理（時間ベース）
+# 重複イベントの管理
 event_cache = deque(maxlen=100)
 event_timestamps = {}
 EVENT_CACHE_TTL = 60  # 秒
 
 def extract_tool_name(text):
-    keywords_to_remove = ["の場所", "どこ", "場所", "は？", "は", "？"]
+    keywords_to_remove = ["の場所", "どこにありますか", "どこ", "場所", "は？", "は", "？"]
     for word in keywords_to_remove:
         text = text.replace(word, "")
     text = text.replace("　", " ")
     return text.strip()
+
+def find_tool_location(tool_name):
+    url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    params = {
+        "filterByFormula": f"SEARCH(LOWER('{tool_name}'), LOWER({{道具名}}))"
+    }
+    response = requests.get(url, headers=headers, params=params).json()
+    if "records" in response and len(response["records"]) > 0:
+        record = response["records"][0]["fields"]
+        return f"{record.get('道具名')} は現在「{record.get('現在の場所')}」にあります。"
+    else:
+        return f"{tool_name} は見つかりませんでした。"
 
 def get_tool_list_by_user(user_name):
     url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
@@ -119,7 +135,6 @@ def slack_events():
     event_id = data.get("event_id")
     now = time.time()
 
-    # イベント重複防止（処理前スキップ）
     if event_id in event_timestamps:
         if now - event_timestamps[event_id] < EVENT_CACHE_TTL:
             print(f"⚠️ 重複イベント {event_id} をスキップ")
@@ -159,7 +174,6 @@ def slack_events():
                 "Content-type": "application/json"
             })
 
-            # ✅ 成功したので重複検知用に記録
             event_timestamps[event_id] = now
             event_cache.append(event_id)
 
