@@ -87,7 +87,7 @@ def slack_events():
                 reply_text = find_tool_location(tool_name)
             else:
                 response = client.chat.completions.create(
-                    model="gpt-4",
+                    model="gpt-4-turbo",  # ← ここを修正済み
                     messages=[
                         {"role": "system", "content": "あなたはSlack上の親切なアシスタントBotです。"},
                         {"role": "user", "content": cleaned_text}
