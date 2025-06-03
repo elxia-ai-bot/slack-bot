@@ -45,13 +45,20 @@ def get_tool_list_by_user(user_name):
 
 def update_user_and_location(message):
     lines = message.strip().split("\n")
-    record_lines = [line for line in lines if re.match(r"^(管理番号)?\d+", line)]
-    movement_line = next((line for line in lines if "から" in line and "へ" in line), "")
 
-    if not record_lines or not movement_line:
-        return "変更内容が正しく読み取れませんでした。"
+    # 全文から「〇〇から△△へ」を正しく抜き出す
+    joined = " ".join(lines)
+    match = re.search(r"(.+?)から(.+?)へ", joined)
+    if not match:
+        return "変更対象の使用者や場所が読み取れませんでした。"
+    old_user, new_user = match.group(1).strip(), match.group(2).strip()
 
-    old_user, new_user = re.findall(r"(.*?)から(.*?)へ", movement_line)[0]
+    # 管理番号を含む行のみを処理対象に
+    record_lines = [line for line in lines if re.search(r"\d+", line)]
+
+    if not record_lines:
+        return "変更対象の道具が見つかりませんでした。"
+
     headers = {
         "Authorization": f"Bearer {AIRTABLE_TOKEN}",
         "Content-Type": "application/json"
@@ -76,8 +83,8 @@ def update_user_and_location(message):
             record_id = response["records"][0]["id"]
             update_data = {
                 "fields": {
-                    "使用者": new_user.strip(),
-                    "現在の場所": new_user.strip(),
+                    "使用者": new_user,
+                    "現在の場所": new_user,
                     "最終更新日": today
                 }
             }
@@ -94,8 +101,7 @@ def update_user_and_location(message):
     if failures:
         msg += f"\n更新失敗：{', '.join(failures)}"
 
-    # 一覧も追加
-    msg += get_tool_list_by_user(new_user.strip())
+    msg += get_tool_list_by_user(new_user)
     return msg
 
 @app.route('/slack', methods=['POST'])
@@ -150,4 +156,3 @@ def slack_events():
             print("Slackへの送信結果:", slack_response.status_code, slack_response.text)
 
     return "OK", 200
-
