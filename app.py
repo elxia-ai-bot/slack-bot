@@ -19,29 +19,36 @@ TABLE_NAME = "道具一覧"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# イベントの重複検知（メモリ内保存）
+# イベントの重複検知
 recent_event_ids = set()
 
-# 道具名を抽出し、ゆれを補正（全角スペース→半角）
+# 道具名の抽出・スペース修正
 def extract_tool_name(text):
     keywords_to_remove = ["の場所", "どこ", "場所", "は？", "は", "？"]
     for word in keywords_to_remove:
         text = text.replace(word, "")
-    text = text.replace("　", " ")  # ← 全角スペースを半角へ
+    text = text.replace("　", " ")  # 全角スペースを半角に
     return text.strip()
 
-# Airtableから道具の場所を取得（部分一致＆小文字化）
+# Airtable検索関数（ログ付き）
 def find_tool_location(tool_name):
     url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
     headers = {
         "Authorization": f"Bearer {AIRTABLE_TOKEN}",
         "Content-Type": "application/json"
     }
+    formula = f"SEARCH(LOWER('{tool_name.lower()}'), LOWER({{道具名}}))"
+    print("🔍 Airtable検索条件:", formula)
+
     params = {
-        "filterByFormula": f"SEARCH(LOWER('{tool_name.lower()}'), LOWER({{道具名}}))"
+        "filterByFormula": formula
     }
+
     response = requests.get(url, headers=headers, params=params)
     data = response.json()
+
+    print("🧾 Airtableレスポンス:", data)
+
     if "records" in data and len(data["records"]) > 0:
         record = data["records"][0]["fields"]
         return f"{record.get('道具名')} は現在「{record.get('現在の場所')}」にあります。"
