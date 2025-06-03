@@ -15,7 +15,7 @@ AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
 
 # Airtable情報
 BASE_ID = "appOuWggbJxUAcFzF"
-TABLE_NAME = "道具一覧"
+TABLE_NAME = "Table 1"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
