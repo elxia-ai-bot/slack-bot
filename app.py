@@ -2,8 +2,10 @@ from flask import Flask, request, jsonify
 import os
 import requests
 import re
+import time
 from datetime import date
 from dotenv import load_dotenv
+from collections import deque
 from openai import OpenAI
 
 load_dotenv()
@@ -17,7 +19,11 @@ BASE_ID = "appOuWggbJxUAcFzF"
 TABLE_NAME = "Table 1"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
-recent_event_ids = set()
+
+# 重複イベント検出（60秒キャッシュ）
+event_cache = deque(maxlen=100)
+event_timestamps = {}
+EVENT_CACHE_TTL = 60  # 秒
 
 def extract_tool_name(text):
     keywords_to_remove = ["の場所", "どこ", "場所", "は？", "は", "？"]
@@ -46,11 +52,9 @@ def update_user_and_location(message):
     lines = message.strip().split("\n")
     joined = " ".join(lines)
 
-    # 改善版：末尾の「〇〇から△△へ」だけにマッチして、前の道具名などを排除
     match = re.search(r"(.+?)から(.+?)へ", joined)
     if not match:
         return "変更対象の使用者や場所が読み取れませんでした。"
-    # 「から」の前の語句の最後の単語だけをold_userとする
     old_user = match.group(1).strip().split()[-1]
     new_user = match.group(2).strip()
 
@@ -112,16 +116,18 @@ def slack_events():
     if data is None:
         return "NO DATA", 400
 
+    event_id = data.get("event_id")
+    now = time.time()
+    if event_id in event_timestamps and now - event_timestamps[event_id] < EVENT_CACHE_TTL:
+        print(f"⚠️ 重複イベント {event_id} をスキップ")
+        return "Duplicate", 200
+    event_timestamps[event_id] = now
+    event_cache.append(event_id)
+
     if data.get("type") == "url_verification":
         return jsonify({"challenge": data["challenge"]})
 
     if data.get("type") == "event_callback":
-        event_id = data.get("event_id")
-        if event_id in recent_event_ids:
-            print(f"⚠️ 重複イベント {event_id} をスキップ")
-            return "Duplicate", 200
-        recent_event_ids.add(event_id)
-
         event = data["event"]
         if event.get("type") == "app_mention":
             raw_text = event.get("text", "")
@@ -130,28 +136,4 @@ def slack_events():
             print("ユーザーからのメッセージ:", cleaned_text)
 
             if "から" in cleaned_text and "へ" in cleaned_text:
-                reply_text = update_user_and_location(cleaned_text)
-            elif "どこ" in cleaned_text or "場所" in cleaned_text:
-                tool_name = extract_tool_name(cleaned_text)
-                reply_text = find_tool_location(tool_name)
-            else:
-                response = client.chat.completions.create(
-                    model="gpt-4-turbo",
-                    messages=[
-                        {"role": "system", "content": "あなたはSlack上の親切なアシスタントBotです。"},
-                        {"role": "user", "content": cleaned_text}
-                    ]
-                )
-                reply_text = response.choices[0].message.content.strip()
-
-            slack_response = requests.post("https://slack.com/api/chat.postMessage", json={
-                "channel": channel_id,
-                "text": reply_text
-            }, headers={
-                "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
-                "Content-type": "application/json"
-            })
-
-            print("Slackへの送信結果:", slack_response.status_code, slack_response.text)
-
-    return "OK", 200
+                reply_text = update_us
