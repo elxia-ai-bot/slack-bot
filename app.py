@@ -22,23 +22,23 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # イベントの重複検知（メモリ内保存）
 recent_event_ids = set()
 
-# 道具名をクリーンに抽出する関数
+# 道具名を抽出する関数（不要語句を削除）
 def extract_tool_name(text):
-    # よくある語句を除去
     keywords_to_remove = ["の場所", "どこ", "場所", "は？", "は", "？"]
     for word in keywords_to_remove:
         text = text.replace(word, "")
     return text.strip()
 
-# Airtableから道具の場所を取得
+# Airtableから道具の場所を取得（検索ゆれ対策あり）
 def find_tool_location(tool_name):
     url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
     headers = {
         "Authorization": f"Bearer {AIRTABLE_TOKEN}",
         "Content-Type": "application/json"
     }
+    # 小文字で部分一致検索
     params = {
-        "filterByFormula": f"FIND('{tool_name}', {{道具名}})"
+        "filterByFormula": f"SEARCH(LOWER('{tool_name.lower()}'), LOWER({{道具名}}))"
     }
     response = requests.get(url, headers=headers, params=params)
     data = response.json()
@@ -80,12 +80,12 @@ def slack_events():
             cleaned_text = re.sub(r"<@[\w]+>", "", raw_text).strip()
             print("ユーザーからのメッセージ:", cleaned_text)
 
-            # 場所検索かどうか判定
+            # 判定：場所の質問か？
             if "どこ" in cleaned_text or "場所" in cleaned_text:
                 tool_name = extract_tool_name(cleaned_text)
                 reply_text = find_tool_location(tool_name)
             else:
-                # OpenAIに処理を任せる
+                # OpenAIでチャット処理
                 response = client.chat.completions.create(
                     model="gpt-4",
                     messages=[
@@ -95,7 +95,7 @@ def slack_events():
                 )
                 reply_text = response.choices[0].message.content.strip()
 
-            # Slackへ返信
+            # Slackに返信
             slack_response = requests.post("https://slack.com/api/chat.postMessage", json={
                 "channel": channel_id,
                 "text": reply_text
